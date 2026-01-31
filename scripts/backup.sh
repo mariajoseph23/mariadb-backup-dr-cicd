@@ -24,7 +24,6 @@ mysqldump \
   --routines \
   --triggers \
   --events \
-  --set-gtid-purged=OFF \
   > "$BACKUP_FILE"
 
 echo "Backup complete: $(wc -c < "$BACKUP_FILE") bytes"
