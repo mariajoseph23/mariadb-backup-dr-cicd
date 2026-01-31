@@ -1,0 +1,107 @@
+name: dr-ci
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  backup-restore-validate:
+    runs-on: ubuntu-latest
+
+    services:
+      mariadb:
+        image: mariadb:10.11
+        env:
+          MARIADB_ROOT_PASSWORD: rootpass
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mariadb-admin ping -h 127.0.0.1 -prootpass"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install MariaDB client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mariadb-client
+
+      - name: Wait for MariaDB
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_USER: root
+          DB_PASS: rootpass
+        run: |
+          for i in {1..60}; do
+            if mariadb --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USER" --password="$DB_PASS" -e "SELECT 1;" >/dev/null 2>&1; then
+              echo "MariaDB is ready."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "MariaDB did not become ready in time."
+          exit 1
+
+      - name: Apply schema
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_USER: root
+          DB_PASS: rootpass
+        run: |
+          mariadb --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USER" --password="$DB_PASS" < migrations/V1__init.sql
+
+      - name: Seed data
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_USER: root
+          DB_PASS: rootpass
+        run: |
+          mariadb --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USER" --password="$DB_PASS" < scripts/seed.sql
+
+      - name: Backup
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_USER: root
+          DB_PASS: rootpass
+          DB_NAME: appdb
+          BACKUP_DIR: ./artifacts
+          BACKUP_FILE: ./artifacts/backup.sql
+        run: ./scripts/backup.sh
+
+      - name: Drop database (simulate loss)
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_USER: root
+          DB_PASS: rootpass
+        run: |
+          mariadb --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USER" --password="$DB_PASS" -e "DROP DATABASE IF EXISTS appdb;"
+
+      - name: Restore
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_USER: root
+          DB_PASS: rootpass
+          BACKUP_FILE: ./artifacts/backup.sql
+        run: ./scripts/restore.sh
+
+      - name: Validate
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_USER: root
+          DB_PASS: rootpass
+          DB_NAME: appdb
+        run: ./scripts/validate.sh
+
